@@ -1,0 +1,20 @@
+[project]
+name = "falsify"
+version = "0.1.0"
+description = "Event-study harness for strategy research, with pre-registration and multiple-testing correction built in"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "polars>=1.0",
+    "numpy>=1.26",
+    "pyarrow>=15",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+stats = ["sharpebench", "pypbo"]
+dev = ["pytest", "ruff", "mypy"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

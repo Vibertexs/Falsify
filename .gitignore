@@ -1,0 +1,11 @@
+# Data is NEVER committed. Dukascopy usage is governed by their agreement;
+# the manifest reproduces the dataset, the bytes stay local.
+data/**
+!data/MANIFEST.md
+!data/.gitkeep
+
+__pycache__/
+*.py[cod]
+.venv/
+.ipynb_checkpoints/
+*.parquet
