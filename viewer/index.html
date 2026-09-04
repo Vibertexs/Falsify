@@ -1,0 +1,1248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>falsify · viewer</title>
+
+<!-- Equity curve. Loaded once, at page load; nothing is fetched at runtime. -->
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+
+<style>
+/* ------------------------------------------------------------------ tokens */
+:root {
+  --bg:        #1a1a2e;
+  --panel:     #1e1e36;
+  --panel-2:   #232342;
+  --border:    #2e2e50;
+  --border-2:  #3a3a63;
+  --text:      #e4e4f2;
+  --muted:     #8f8fb4;
+  --dim:       #61618c;
+  --green:     #26a69a;
+  --red:       #ef5350;
+  --accent:    #6d8dff;
+  --amber:     #f0b429;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------------ top bar */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 0 16px; height: 48px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 20;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand .mark { font-weight: 650; letter-spacing: .2px; font-size: 15px; }
+.brand .sub  { color: var(--dim); font-size: 12px; }
+
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 10px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  color: var(--muted); font-size: 11.5px; white-space: nowrap;
+}
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); flex: none; }
+.pill.ok    .dot { background: var(--green); }
+.pill.bad   .dot { background: var(--red); }
+
+.trials {
+  font-size: 12px; color: var(--muted); white-space: nowrap;
+  padding: 4px 12px; border-radius: 6px;
+  background: var(--panel-2); border: 1px solid var(--border);
+}
+.trials b { color: var(--text); font-family: var(--mono); font-weight: 600; }
+
+/* ------------------------------------------------------------------- layout */
+main {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  padding: 14px; max-width: 1680px; margin: 0 auto;
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px 16px 16px; min-width: 0;
+}
+#panel-data, #panel-splits { grid-column: 1 / -1; }
+@media (max-width: 1080px) { main { grid-template-columns: 1fr; } }
+
+.phead {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 12px; min-height: 26px;
+}
+.phead h2 {
+  margin: 0; font-size: 12px; font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+.phead .note { font-size: 11.5px; color: var(--dim); font-family: var(--mono); }
+
+/* ------------------------------------------------------------------ controls */
+button, select {
+  font: inherit; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--border-2);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer;
+}
+button:hover, select:hover { border-color: var(--accent); }
+button:disabled { opacity: .35; cursor: not-allowed; border-color: var(--border); }
+select { padding-right: 26px; font-family: var(--mono); font-size: 12px; }
+
+.seg { display: inline-flex; gap: 4px; }
+.seg button {
+  font-family: var(--mono); font-size: 11.5px; padding: 3px 9px;
+  color: var(--muted); background: transparent;
+}
+.seg button.active {
+  color: var(--text); background: var(--panel-2);
+  border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(109,141,255,.25);
+}
+
+/* ----------------------------------------------------------------- drop zone */
+.drop {
+  border: 1.5px dashed var(--border-2); border-radius: 8px;
+  padding: 26px 20px; text-align: center;
+  transition: border-color .12s, background .12s;
+}
+.drop.hot { border-color: var(--accent); background: rgba(109,141,255,.06); }
+.drop-title { font-size: 14px; margin-bottom: 5px; }
+.drop-sub   { font-size: 12px; color: var(--dim); }
+.drop-sub b { color: var(--muted); font-weight: 500; font-family: var(--mono); }
+
+/* --------------------------------------------------------------------- stats */
+.stats {
+  display: grid; gap: 1px; background: var(--border);
+  border: 1px solid var(--border); border-radius: 7px; overflow: hidden;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+}
+.stat { background: var(--panel); padding: 10px 13px; }
+.stat .k {
+  font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 4px; white-space: nowrap;
+}
+.stat .v { font-family: var(--mono); font-size: 15px; }
+.stat .v small { font-size: 11.5px; color: var(--muted); font-weight: 400; }
+.stat .sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+
+/* --------------------------------------------------------------------- chart */
+.canvas-wrap { position: relative; }
+canvas { display: block; width: 100%; }
+#hist-canvas { height: 260px; }
+.mini canvas { height: 128px; }
+
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  transform: translate(-50%, -100%); transition: opacity .08s;
+  background: #10101f; border: 1px solid var(--border-2); border-radius: 5px;
+  padding: 5px 8px; font-family: var(--mono); font-size: 11px;
+  white-space: nowrap; z-index: 5;
+}
+
+#equity { height: 288px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; }
+.legend .item {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+}
+.legend .swatch { width: 9px; height: 2px; border-radius: 1px; flex: none; }
+
+/* --------------------------------------------------------------------- arms */
+.arms { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 780px) { .arms { grid-template-columns: 1fr; } }
+
+.arm { border: 1px solid var(--border); border-radius: 7px; padding: 12px; background: var(--panel-2); }
+.arm .label { font-family: var(--mono); font-size: 12px; margin-bottom: 2px; }
+.arm .n { font-size: 11px; color: var(--dim); margin-bottom: 10px; font-family: var(--mono); }
+.arm .metric { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.arm .metric .m { font-family: var(--mono); font-size: 17px; }
+.arm .metric .ci { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+
+.verdict {
+  margin-top: 14px; padding: 11px 13px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--panel-2);
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px;
+}
+.verdict .headline { font-family: var(--mono); font-size: 13px; }
+.verdict .why { font-size: 11.5px; color: var(--muted); flex-basis: 100%; }
+.verdict .why b { color: var(--text); font-weight: 500; }
+
+/* -------------------------------------------------------------------- notes */
+.empty { color: var(--dim); font-size: 12.5px; padding: 22px 2px; text-align: center; }
+.err {
+  margin-top: 12px; padding: 11px 13px; border-radius: 7px; font-size: 12.5px;
+  border: 1px solid rgba(239,83,80,.45); background: rgba(239,83,80,.09); color: #ffc9c7;
+}
+.err code, .drop-sub code {
+  font-family: var(--mono); font-size: 11.5px;
+  background: rgba(0,0,0,.3); padding: 1px 5px; border-radius: 4px;
+}
+.hidden { display: none !important; }
+.footnote { margin-top: 10px; font-size: 11px; color: var(--dim); }
+</style>
+</head>
+
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">falsify</span>
+    <span class="sub">event-study viewer</span>
+  </div>
+  <div class="topbar-right">
+    <div class="pill" id="engine-pill"><span class="dot"></span><span id="engine-text">loading DuckDB…</span></div>
+    <div class="trials">Tests registered: <b id="trial-count">0</b></div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============================================================ panel 1 -->
+  <section class="panel" id="panel-data">
+    <div class="phead">
+      <h2>Dataset</h2>
+      <div class="phead-actions">
+        <button id="browse">Choose files…</button>
+      </div>
+    </div>
+
+    <div class="drop" id="drop">
+      <div class="drop-title">Drop an event table <b>.parquet</b> here</div>
+      <div class="drop-sub">
+        Add <b>trial_log.jsonl</b> for the registered-test count. Files are read in the browser; nothing is uploaded.
+      </div>
+    </div>
+
+    <div class="stats hidden" id="summary"></div>
+    <div class="err hidden" id="load-error"></div>
+    <input type="file" id="file-input" multiple accept=".parquet,.jsonl,.json" class="hidden">
+  </section>
+
+  <!-- ============================================================ panel 2 -->
+  <section class="panel" id="panel-dist">
+    <div class="phead">
+      <h2>Forward return distribution</h2>
+      <div class="seg" id="horizons"></div>
+    </div>
+    <div class="canvas-wrap">
+      <canvas id="hist-canvas"></canvas>
+      <div class="tooltip" id="hist-tip"></div>
+      <div class="empty" id="dist-empty">No event table loaded.</div>
+    </div>
+  </section>
+
+  <!-- ============================================================ panel 3 -->
+  <section class="panel" id="panel-equity">
+    <div class="phead">
+      <h2>Cumulative return</h2>
+      <div class="note" id="equity-note"></div>
+    </div>
+    <div id="equity"></div>
+    <div class="legend" id="equity-legend"></div>
+    <div class="empty" id="equity-empty">No event table loaded.</div>
+  </section>
+
+  <!-- ============================================================ panel 4 -->
+  <section class="panel" id="panel-splits">
+    <div class="phead">
+      <h2>Feature split</h2>
+      <select id="feature-select" disabled><option>no features</option></select>
+    </div>
+    <div id="split-body">
+      <div class="empty">No event table loaded.</div>
+    </div>
+  </section>
+
+</main>
+
+<script type="module">
+'use strict';
+
+/* ===========================================================================
+   falsify viewer
+   ---------------------------------------------------------------------------
+   Reads an event table straight off disk and does every calculation here in
+   the page. DuckDB-WASM is the parquet reader; the statistics are plain JS,
+   because a percentile bootstrap is easier to read as a loop than as SQL and
+   because the whole table fits in memory anyway.
+
+   Two conventions carried over from the Python side:
+
+     * The bootstrap is seeded, so the same table gives the same interval on
+       every reload. An interval that moves when you press the button twice is
+       not a number you can quote.
+     * Arm comparisons report the interval on the DIFFERENCE. The per-arm
+       intervals asked for are drawn too, but they are the ones that mislead:
+       two overlapping intervals do not mean no difference, and two disjoint
+       ones overstate it. The difference is the number that decides.
+   =========================================================================== */
+
+const HORIZONS = [1, 3, 5, 10, 20];
+const DEFAULT_HORIZON = 10;
+const FEATURE_PREFIX = 'f_';
+
+/* Bootstrap resamples, scaled down on big tables so a redraw stays instant.
+   Enough for a 95% percentile interval; not enough for a tail quantile, which
+   this viewer does not report. */
+const BOOT_BUDGET = 2.0e7;
+const BOOT_MIN = 500, BOOT_MAX = 2500;
+const SEED = 0;
+
+const SERIES_COLORS = [
+  '#26a69a', '#6d8dff', '#f0b429', '#ef5350',
+  '#ab47bc', '#26c6da', '#9ccc65', '#ff7043',
+];
+
+const state = {
+  table: null,          // { names, n, cols }
+  horizon: DEFAULT_HORIZON,
+  feature: null,
+  trials: { registered: 0, exploratory: 0, file: null },
+  engine: null,         // 'duckdb' | 'hyparquet'
+};
+
+const $ = (id) => document.getElementById(id);
+
+/* ===========================================================================
+   Small numeric helpers
+   =========================================================================== */
+
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+
+function fmt(x, dp = 3) {
+  if (x === null || x === undefined || !Number.isFinite(x)) return '—';
+  return x.toFixed(dp);
+}
+function signed(x, dp = 3) {
+  if (!Number.isFinite(x)) return '—';
+  return (x >= 0 ? '+' : '') + x.toFixed(dp);
+}
+function cls(x) { return x > 0 ? 'pos' : x < 0 ? 'neg' : ''; }
+
+function mean(a) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i];
+  return a.length ? s / a.length : NaN;
+}
+function variance(a) {
+  const n = a.length;
+  if (n < 2) return NaN;
+  const m = mean(a);
+  let s = 0;
+  for (let i = 0; i < n; i++) { const d = a[i] - m; s += d * d; }
+  return s / (n - 1);
+}
+function quantileSorted(sorted, q) {
+  const n = sorted.length;
+  if (!n) return NaN;
+  const pos = (n - 1) * q;
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+function median(values) {
+  const s = Float64Array.from(values).sort();
+  return quantileSorted(s, 0.5);
+}
+
+/* Seeded PRNG, so every interval on the page is reproducible. */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function nBoot(n) {
+  return Math.max(BOOT_MIN, Math.min(BOOT_MAX, Math.floor(BOOT_BUDGET / Math.max(n, 1))));
+}
+
+/** Percentile bootstrap interval for a mean. */
+function bootstrapMeanCI(values, seed = SEED) {
+  const n = values.length;
+  if (n < 2) return [NaN, NaN];
+  const reps = nBoot(n);
+  const rng = mulberry32(seed);
+  const means = new Float64Array(reps);
+  for (let b = 0; b < reps; b++) {
+    let s = 0;
+    for (let i = 0; i < n; i++) s += values[(rng() * n) | 0];
+    means[b] = s / n;
+  }
+  means.sort();
+  return [quantileSorted(means, 0.025), quantileSorted(means, 0.975)];
+}
+
+/** Percentile bootstrap interval for mean(b) - mean(a), arms resampled apart. */
+function bootstrapDiffCI(a, b, seed = SEED) {
+  const na = a.length, nb = b.length;
+  if (na < 2 || nb < 2) return [NaN, NaN];
+  const reps = nBoot(Math.max(na, nb));
+  const rng = mulberry32(seed);
+  const diffs = new Float64Array(reps);
+  for (let r = 0; r < reps; r++) {
+    let sa = 0, sb = 0;
+    for (let i = 0; i < na; i++) sa += a[(rng() * na) | 0];
+    for (let i = 0; i < nb; i++) sb += b[(rng() * nb) | 0];
+    diffs[r] = sb / nb - sa / na;
+  }
+  diffs.sort();
+  return [quantileSorted(diffs, 0.025), quantileSorted(diffs, 0.975)];
+}
+
+/** Smallest |difference| this sample could resolve at t = 2. */
+function detectableEffect(a, b) {
+  const va = variance(a), vb = variance(b);
+  if (!Number.isFinite(va) || !Number.isFinite(vb)) return NaN;
+  return 2 * Math.sqrt(va / a.length + vb / b.length);
+}
+
+/* Timestamps arrive as Date, bigint, or an integer in one of four units
+   depending on the reader and the parquet writer. Decide by magnitude. */
+function toMillis(v) {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === 'bigint') v = Number(v);
+  if (typeof v === 'string') { const t = Date.parse(v); return Number.isNaN(t) ? null : t; }
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  const a = Math.abs(v);
+  if (a > 1e17) return v / 1e6;   // nanoseconds
+  if (a > 1e14) return v / 1e3;   // microseconds
+  if (a > 1e11) return v;         // milliseconds
+  return v * 1000;                // seconds
+}
+function fmtDate(ms) {
+  if (ms === null) return '—';
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/* ===========================================================================
+   Parquet readers
+   ---------------------------------------------------------------------------
+   DuckDB-WASM needs a Web Worker, and it builds one from a blob URL because a
+   worker script cannot be cross-origin. Chrome refuses blob workers on a
+   file:// page, so a page opened straight off disk falls back to hyparquet, a
+   pure-JS reader that needs no worker. Same output shape either way.
+   =========================================================================== */
+
+const DUCKDB_URLS = [
+  'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm',
+  'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm/+esm',
+];
+const HYPARQUET_URLS = [
+  'https://cdn.jsdelivr.net/npm/hyparquet@1/+esm',
+  'https://cdn.jsdelivr.net/npm/hyparquet/+esm',
+];
+
+async function importFirst(urls) {
+  let last;
+  for (const url of urls) {
+    try { return await import(url); } catch (e) { last = e; }
+  }
+  throw last || new Error('no module could be loaded');
+}
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  const bell = new Promise((_, rej) => {
+    timer = setTimeout(() => rej(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([promise, bell]).finally(() => clearTimeout(timer));
+}
+
+let duckdb = null, duckDB = null;
+
+async function initDuckDB() {
+  duckdb = await importFirst(DUCKDB_URLS);
+  const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+
+  const blobUrl = URL.createObjectURL(new Blob(
+    [`importScripts(${JSON.stringify(bundle.mainWorker)});`],
+    { type: 'text/javascript' },
+  ));
+
+  // Throws here on file:// in Chrome: blob:null/… is an opaque origin.
+  const worker = new Worker(blobUrl);
+  const crashed = new Promise((_, rej) => {
+    worker.addEventListener('error', (e) => rej(new Error(e.message || 'DuckDB worker failed to start')), { once: true });
+  });
+
+  const Logger = duckdb.VoidLogger || duckdb.ConsoleLogger;
+  const db = new duckdb.AsyncDuckDB(new Logger(), worker);
+  await Promise.race([
+    withTimeout(db.instantiate(bundle.mainModule, bundle.pthreadWorker), 45000, 'DuckDB startup'),
+    crashed,
+  ]);
+  URL.revokeObjectURL(blobUrl);
+  return db;
+}
+
+/** Arrow table -> plain column arrays, null-aware. */
+function arrowToColumns(table) {
+  const names = table.schema.fields.map((f) => f.name);
+  const n = table.numRows;
+  const cols = {};
+  for (const name of names) {
+    const vec = table.getChild(name);
+    const out = new Array(n);
+    // get(i) rather than toArray(): the raw buffer would read a null as 0,
+    // and a truncated forward window has to stay null.
+    for (let i = 0; i < n; i++) { const v = vec.get(i); out[i] = v === undefined ? null : v; }
+    cols[name] = out;
+  }
+  return { names, n, cols };
+}
+
+async function readParquet(buffer, name) {
+  if (duckDB) {
+    const handle = `events_${Date.now()}.parquet`;
+    await duckDB.registerFileBuffer(handle, new Uint8Array(buffer));
+    const conn = await duckDB.connect();
+    try {
+      const res = await conn.query(`SELECT * FROM read_parquet('${handle}')`);
+      return arrowToColumns(res);
+    } finally {
+      await conn.close();
+      try { await duckDB.dropFile(handle); } catch { /* older builds */ }
+    }
+  }
+  return readParquetFallback(buffer);
+}
+
+async function readParquetFallback(buffer) {
+  const hp = await importFirst(HYPARQUET_URLS);
+  let rows;
+  if (typeof hp.parquetReadObjects === 'function') {
+    rows = await hp.parquetReadObjects({ file: buffer });
+  } else {
+    rows = await new Promise((resolve, reject) => {
+      try { hp.parquetRead({ file: buffer, rowFormat: 'object', onComplete: resolve }); }
+      catch (e) { reject(e); }
+    });
+  }
+  const names = rows.length ? Object.keys(rows[0]) : [];
+  const cols = {};
+  for (const k of names) cols[k] = rows.map((r) => (r[k] === undefined ? null : r[k]));
+  return { names, n: rows.length, cols };
+}
+
+/* ===========================================================================
+   Engine boot
+   =========================================================================== */
+
+function setEngine(status, text) {
+  const pill = $('engine-pill');
+  pill.className = 'pill' + (status ? ' ' + status : '');
+  $('engine-text').textContent = text;
+}
+
+(async function boot() {
+  try {
+    duckDB = await initDuckDB();
+    state.engine = 'duckdb';
+    setEngine('ok', 'DuckDB-WASM ready');
+  } catch (err) {
+    // Not fatal: the fallback reader needs no worker and no wasm.
+    console.warn('DuckDB unavailable, falling back to hyparquet:', err);
+    try {
+      await importFirst(HYPARQUET_URLS);
+      state.engine = 'hyparquet';
+      setEngine('ok', 'hyparquet ready · DuckDB blocked on file://');
+    } catch (err2) {
+      console.error(err2);
+      setEngine('bad', 'no parquet reader loaded');
+      showError(
+        'Neither DuckDB-WASM nor the fallback reader could load, which usually means this page ' +
+        'had no network access on its first load. Reload once while online, or serve the folder: ' +
+        '<code>python -m http.server 8000</code> then open <code>http://localhost:8000/viewer/</code>.',
+      );
+    }
+  }
+})();
+
+/* ===========================================================================
+   File intake
+   =========================================================================== */
+
+const drop = $('drop');
+
+['dragenter', 'dragover'].forEach((ev) => {
+  document.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('hot'); });
+});
+['dragleave', 'drop'].forEach((ev) => {
+  document.addEventListener(ev, (e) => {
+    e.preventDefault();
+    if (ev === 'drop' || e.relatedTarget === null) drop.classList.remove('hot');
+  });
+});
+document.addEventListener('drop', (e) => handleFiles([...(e.dataTransfer?.files || [])]));
+
+$('browse').addEventListener('click', () => $('file-input').click());
+$('file-input').addEventListener('change', (e) => handleFiles([...e.target.files]));
+drop.addEventListener('click', () => $('file-input').click());
+
+function showError(html) {
+  const box = $('load-error');
+  box.innerHTML = html;
+  box.classList.remove('hidden');
+}
+function clearError() { $('load-error').classList.add('hidden'); }
+
+async function handleFiles(files) {
+  if (!files.length) return;
+  clearError();
+
+  const parquet = files.find((f) => f.name.toLowerCase().endsWith('.parquet'));
+  const logs = files.filter((f) => /\.(jsonl|json|log)$/i.test(f.name));
+
+  for (const log of logs) {
+    try { loadTrialLog(await log.text(), log.name); }
+    catch (e) { showError(`Could not read <code>${escapeHtml(log.name)}</code>: ${escapeHtml(e.message)}`); }
+  }
+
+  if (parquet) {
+    drop.querySelector('.drop-title').textContent = `Reading ${parquet.name}…`;
+    try {
+      const table = await readParquet(await parquet.arrayBuffer(), parquet.name);
+      adoptTable(table, parquet);
+    } catch (e) {
+      console.error(e);
+      resetDropText();
+      showError(`Could not read <code>${escapeHtml(parquet.name)}</code>: ${escapeHtml(e.message)}`);
+      return;
+    }
+  }
+  renderAll();
+}
+
+function resetDropText() {
+  drop.querySelector('.drop-title').innerHTML = 'Drop an event table <b>.parquet</b> here';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function adoptTable(table, file) {
+  state.table = table;
+  state.table.file = file.name;
+
+  const present = HORIZONS.filter((h) => table.names.includes(`fwd_${h}`));
+  if (!present.length) {
+    state.table = null;
+    resetDropText();
+    showError(
+      `<code>${escapeHtml(file.name)}</code> has no <code>fwd_*</code> columns, so it is not an event table. ` +
+      `Columns found: <code>${escapeHtml(table.names.slice(0, 12).join(', '))}</code>${table.names.length > 12 ? ' …' : ''}`,
+    );
+    return;
+  }
+  if (!present.includes(state.horizon)) state.horizon = present[0];
+
+  const features = table.names.filter((c) => c.startsWith(FEATURE_PREFIX));
+  state.feature = features.includes(state.feature) ? state.feature : (features[0] || null);
+
+  drop.querySelector('.drop-title').textContent = file.name;
+  drop.querySelector('.drop-sub').innerHTML =
+    `${table.n.toLocaleString()} rows · ${table.names.length} columns · read with ` +
+    `<b>${state.engine || 'unknown'}</b> · drop another file to replace`;
+}
+
+/** Count registrations the way prereg.trial_count() does: exploratory excluded. */
+function loadTrialLog(text, name) {
+  let registered = 0, exploratory = 0, parsed = 0;
+  for (const line of text.split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    let rec;
+    try { rec = JSON.parse(s); } catch { continue; }
+    parsed++;
+    if (rec.kind !== 'registration') continue;
+    if (rec.exploratory) exploratory++; else registered++;
+  }
+  if (!parsed) throw new Error('no JSON records found');
+  state.trials = { registered, exploratory, file: name };
+  $('trial-count').textContent = registered;
+}
+
+/* ===========================================================================
+   Column access
+   =========================================================================== */
+
+/** Finite values of a column, nulls dropped. */
+function finite(colName) {
+  const col = state.table?.cols[colName];
+  if (!col) return new Float64Array(0);
+  const out = new Float64Array(col.length);
+  let k = 0;
+  for (let i = 0; i < col.length; i++) {
+    const v = typeof col[i] === 'bigint' ? Number(col[i]) : col[i];
+    if (isNum(v)) out[k++] = v;
+  }
+  return out.subarray(0, k);
+}
+function has(colName) { return !!state.table && state.table.names.includes(colName); }
+function featureColumns() {
+  return state.table ? state.table.names.filter((c) => c.startsWith(FEATURE_PREFIX)) : [];
+}
+function metric() { return `fwd_${state.horizon}`; }
+
+/* ===========================================================================
+   Panel 1 — summary
+   =========================================================================== */
+
+function renderSummary() {
+  const box = $('summary');
+  if (!state.table) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+
+  const t = state.table;
+  const values = finite(metric());
+  const m = mean(values);
+  const [lo, hi] = bootstrapMeanCI(values);
+
+  const symbols = has('symbol') ? [...new Set(t.cols.symbol.filter((v) => v !== null))].sort() : [];
+
+  let range = '—', span = '';
+  if (has('signal_ts')) {
+    // Folded rather than spread into Math.min: a hundred thousand arguments
+    // overflows the call stack, and an event table is meant to be that big.
+    let min = Infinity, max = -Infinity, seen = 0;
+    for (const raw of t.cols.signal_ts) {
+      const ms = toMillis(raw);
+      if (ms === null) continue;
+      if (ms < min) min = ms;
+      if (ms > max) max = ms;
+      seen++;
+    }
+    if (seen) { range = fmtDate(min); span = `to ${fmtDate(max)}`; }
+  }
+
+  const missing = t.n - values.length;
+  const cards = [
+    { k: 'Events', v: t.n.toLocaleString(), sub: missing ? `${missing.toLocaleString()} null at this horizon` : 'all measured' },
+    { k: 'Symbols', v: symbols.length || '—', sub: symbols.slice(0, 4).join(' ') + (symbols.length > 4 ? ` +${symbols.length - 4}` : '') },
+    { k: 'Date range', v: range, sub: span },
+    { k: `Mean ${metric()}`, v: signed(m), cls: cls(m), sub: 'ATR units' },
+    { k: '95% CI (bootstrap)', v: `${signed(lo)} … ${signed(hi)}`, small: true, sub: lo > 0 || hi < 0 ? 'excludes zero' : 'contains zero' },
+    { k: 'Tests registered', v: state.trials.registered, sub: state.trials.file ? `${state.trials.exploratory} exploratory` : 'no trial log loaded' },
+  ];
+
+  box.innerHTML = cards.map((c) => `
+    <div class="stat">
+      <div class="k">${escapeHtml(c.k)}</div>
+      <div class="v ${c.cls || ''}" ${c.small ? 'style="font-size:12.5px"' : ''}>${escapeHtml(String(c.v))}</div>
+      ${c.sub ? `<div class="sub">${escapeHtml(c.sub)}</div>` : ''}
+    </div>`).join('');
+}
+
+/* ===========================================================================
+   Panel 2 — distribution
+   =========================================================================== */
+
+function renderHorizonButtons() {
+  const seg = $('horizons');
+  const present = HORIZONS.filter((h) => has(`fwd_${h}`));
+  const list = present.length ? present : HORIZONS;
+  seg.innerHTML = list.map((h) => `
+    <button data-h="${h}" class="${h === state.horizon ? 'active' : ''}"
+      ${present.includes(h) ? '' : 'disabled'}>fwd_${h}</button>`).join('');
+  seg.querySelectorAll('button').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.horizon = Number(b.dataset.h);
+      renderAll();
+    });
+  });
+}
+
+/** Bins aligned so zero is always an edge — no bar straddles the sign change. */
+function histogram(values, targetBins = 41) {
+  if (!values.length) return null;
+  const sorted = Float64Array.from(values).sort();
+  let lo = quantileSorted(sorted, 0.01);
+  let hi = quantileSorted(sorted, 0.99);
+  lo = Math.min(lo, 0); hi = Math.max(hi, 0);
+  if (!(hi > lo)) { lo -= 0.5; hi += 0.5; }
+
+  const width = (hi - lo) / targetBins;
+  const start = Math.floor(lo / width) * width;
+  const count = Math.max(1, Math.ceil((hi - start) / width));
+  const bins = new Int32Array(count);
+
+  // Outside the 1–99 range is clamped into the end bins, so the bars still
+  // add up to every event rather than quietly dropping the tails.
+  for (let i = 0; i < values.length; i++) {
+    let idx = Math.floor((values[i] - start) / width);
+    if (idx < 0) idx = 0; else if (idx >= count) idx = count - 1;
+    bins[idx]++;
+  }
+  return { bins, start, width, count, total: values.length };
+}
+
+let histGeom = null;
+
+function drawHistogram() {
+  const canvas = $('hist-canvas');
+  const empty = $('dist-empty');
+  const values = state.table ? finite(metric()) : new Float64Array(0);
+
+  if (!values.length) {
+    canvas.classList.add('hidden');
+    empty.classList.remove('hidden');
+    empty.textContent = state.table ? `No measured ${metric()} values.` : 'No event table loaded.';
+    histGeom = null;
+    return;
+  }
+  canvas.classList.remove('hidden');
+  empty.classList.add('hidden');
+
+  const h = histogram(values);
+  const m = mean(values);
+
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const pad = { l: 44, r: 10, t: 12, b: 26 };
+  const plotW = cssW - pad.l - pad.r;
+  const plotH = cssH - pad.t - pad.b;
+  const maxCount = Math.max(...h.bins);
+
+  const xOf = (v) => pad.l + ((v - h.start) / (h.width * h.count)) * plotW;
+  const yOf = (c) => pad.t + plotH - (c / maxCount) * plotH;
+
+  const css = getComputedStyle(document.documentElement);
+  const GREEN = css.getPropertyValue('--green').trim();
+  const RED = css.getPropertyValue('--red').trim();
+  const MUTED = css.getPropertyValue('--muted').trim();
+  const DIM = css.getPropertyValue('--dim').trim();
+  const BORDER = css.getPropertyValue('--border').trim();
+  const ACCENT = css.getPropertyValue('--accent').trim();
+
+  // horizontal guides
+  ctx.strokeStyle = BORDER; ctx.lineWidth = 1;
+  ctx.fillStyle = DIM; ctx.font = '10px ' + css.getPropertyValue('--mono');
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let g = 0; g <= 4; g++) {
+    const c = (maxCount * g) / 4;
+    const y = Math.round(yOf(c)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(cssW - pad.r, y); ctx.stroke();
+    ctx.fillText(Math.round(c).toLocaleString(), pad.l - 7, y);
+  }
+
+  // bars, coloured by which side of zero the bin sits on
+  const bw = plotW / h.count;
+  for (let i = 0; i < h.count; i++) {
+    if (!h.bins[i]) continue;
+    const left = h.start + i * h.width;
+    const x = xOf(left);
+    const y = yOf(h.bins[i]);
+    ctx.fillStyle = (left + h.width / 2) < 0 ? RED : GREEN;
+    ctx.globalAlpha = 0.85;
+    ctx.fillRect(x + 0.5, y, Math.max(1, bw - 1), pad.t + plotH - y);
+  }
+  ctx.globalAlpha = 1;
+
+  // zero line
+  const zx = Math.round(xOf(0)) + 0.5;
+  ctx.strokeStyle = MUTED; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(zx, pad.t); ctx.lineTo(zx, pad.t + plotH); ctx.stroke();
+
+  // mean line
+  const mx = Math.round(xOf(m)) + 0.5;
+  ctx.save();
+  ctx.strokeStyle = ACCENT; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(mx, pad.t); ctx.lineTo(mx, pad.t + plotH); ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = ACCENT; ctx.textAlign = mx > cssW - 80 ? 'right' : 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(` mean ${signed(m)} `, mx, pad.t + 1);
+
+  // x axis
+  ctx.strokeStyle = BORDER;
+  ctx.beginPath();
+  ctx.moveTo(pad.l, pad.t + plotH + 0.5); ctx.lineTo(cssW - pad.r, pad.t + plotH + 0.5); ctx.stroke();
+  ctx.fillStyle = DIM; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let g = 0; g <= 6; g++) {
+    const v = h.start + (h.width * h.count * g) / 6;
+    ctx.fillText(v.toFixed(2), xOf(v), pad.t + plotH + 6);
+  }
+
+  histGeom = { h, pad, plotW, plotH, cssW, cssH, xOf, yOf, bw };
+}
+
+$('hist-canvas').addEventListener('mousemove', (e) => {
+  const tip = $('hist-tip');
+  if (!histGeom) { tip.style.opacity = 0; return; }
+  const rect = e.currentTarget.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const { h, pad, plotW } = histGeom;
+  const i = Math.floor(((x - pad.l) / plotW) * h.count);
+  if (i < 0 || i >= h.count) { tip.style.opacity = 0; return; }
+
+  const lo = h.start + i * h.width;
+  const pct = ((h.bins[i] / h.total) * 100).toFixed(1);
+  tip.innerHTML = `${lo.toFixed(2)} … ${(lo + h.width).toFixed(2)} &nbsp; <b>${h.bins[i].toLocaleString()}</b> (${pct}%)`;
+  tip.style.left = `${histGeom.xOf(lo + h.width / 2)}px`;
+  tip.style.top = `${Math.max(histGeom.yOf(h.bins[i]) - 6, 14)}px`;
+  tip.style.opacity = 1;
+});
+$('hist-canvas').addEventListener('mouseleave', () => { $('hist-tip').style.opacity = 0; });
+
+/* ===========================================================================
+   Panel 3 — cumulative curve
+   =========================================================================== */
+
+let chart = null, chartSeries = [];
+
+function addLineSeries(c, options) {
+  // v4 exposes addLineSeries; v5 replaced it with addSeries(LineSeries, …).
+  if (typeof c.addLineSeries === 'function') return c.addLineSeries(options);
+  return c.addSeries(window.LightweightCharts.LineSeries, options);
+}
+
+function ensureChart() {
+  if (chart) return chart;
+  const LWC = window.LightweightCharts;
+  if (!LWC) return null;
+  const css = getComputedStyle(document.documentElement);
+
+  chart = LWC.createChart($('equity'), {
+    layout: {
+      background: { color: 'transparent' },
+      textColor: css.getPropertyValue('--muted').trim(),
+      fontFamily: css.getPropertyValue('--mono'),
+      attributionLogo: false,
+    },
+    grid: {
+      vertLines: { color: css.getPropertyValue('--border').trim() },
+      horzLines: { color: css.getPropertyValue('--border').trim() },
+    },
+    rightPriceScale: { borderColor: css.getPropertyValue('--border').trim() },
+    crosshair: { mode: 0 },
+    timeScale: {
+      borderColor: css.getPropertyValue('--border').trim(),
+      // The x axis is an event counter, not a clock. Lightweight Charts wants
+      // a number for `time`, so the ordinal is passed through and relabelled.
+      tickMarkFormatter: (t) => `#${t}`,
+    },
+    localization: { timeFormatter: (t) => `event #${t}` },
+    handleScale: { axisPressedMouseMove: { time: true, price: false } },
+    autoSize: true,
+  });
+  return chart;
+}
+
+function renderEquity() {
+  const holder = $('equity'), empty = $('equity-empty'), legend = $('equity-legend');
+  const note = $('equity-note');
+
+  chartSeries.forEach((s) => { try { chart.removeSeries(s); } catch { /* gone */ } });
+  chartSeries = [];
+  legend.innerHTML = '';
+
+  if (!state.table) {
+    holder.classList.add('hidden'); empty.classList.remove('hidden');
+    empty.textContent = 'No event table loaded.'; note.textContent = '';
+    return;
+  }
+  const c = ensureChart();
+  if (!c) {
+    holder.classList.add('hidden'); empty.classList.remove('hidden');
+    empty.textContent = 'Lightweight Charts did not load, so the curve is unavailable.';
+    return;
+  }
+  holder.classList.remove('hidden'); empty.classList.add('hidden');
+  note.textContent = `cumulative ${metric()}, ATR units`;
+
+  const t = state.table;
+  const col = t.cols[metric()];
+  const symCol = has('symbol') ? t.cols.symbol : null;
+  const tsCol = has('signal_ts') ? t.cols.signal_ts : null;
+
+  // One line per symbol, each numbered from its own first event, so a symbol
+  // with fewer events is not stretched across the whole axis.
+  const groups = new Map();
+  for (let i = 0; i < t.n; i++) {
+    const v = typeof col[i] === 'bigint' ? Number(col[i]) : col[i];
+    if (!isNum(v)) continue;               // truncated window: not a zero
+    const key = symCol ? String(symCol[i]) : 'all events';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ order: tsCol ? (toMillis(tsCol[i]) ?? i) : i, v });
+  }
+
+  const names = [...groups.keys()].sort();
+  names.forEach((name, gi) => {
+    const rows = groups.get(name).sort((a, b) => a.order - b.order);
+    let cum = 0;
+    const data = rows.map((r, k) => { cum += r.v; return { time: k + 1, value: cum }; });
+    if (!data.length) return;
+
+    const color = SERIES_COLORS[gi % SERIES_COLORS.length];
+    const series = addLineSeries(c, {
+      color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+      crosshairMarkerRadius: 3,
+    });
+    series.setData(data);
+    chartSeries.push(series);
+
+    const final = data[data.length - 1].value;
+    legend.insertAdjacentHTML('beforeend', `
+      <span class="item">
+        <span class="swatch" style="background:${color}"></span>
+        ${escapeHtml(name)}
+        <span class="${cls(final)}">${signed(final, 1)}</span>
+        <span style="color:var(--dim)">n=${data.length}</span>
+      </span>`);
+  });
+
+  c.timeScale().fitContent();
+}
+
+/* ===========================================================================
+   Panel 4 — feature split
+   =========================================================================== */
+
+function renderFeatureSelect() {
+  const sel = $('feature-select');
+  const features = featureColumns();
+  if (!features.length) {
+    sel.innerHTML = '<option>no f_ columns</option>';
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  sel.innerHTML = features.map((f) =>
+    `<option value="${escapeHtml(f)}" ${f === state.feature ? 'selected' : ''}>${escapeHtml(f)}</option>`).join('');
+}
+
+$('feature-select').addEventListener('change', (e) => {
+  state.feature = e.target.value;
+  renderSplit();
+});
+
+/** Median split, paired so an arm is never empty on a lumpy feature. */
+function splitOnMedian(featureCol, outcomeCol) {
+  const t = state.table;
+  const f = t.cols[featureCol], o = t.cols[outcomeCol];
+
+  const pairs = [];
+  for (let i = 0; i < t.n; i++) {
+    let fv = f[i], ov = o[i];
+    if (typeof fv === 'bigint') fv = Number(fv);
+    if (typeof ov === 'bigint') ov = Number(ov);
+    if (typeof fv === 'boolean') fv = fv ? 1 : 0;
+    if (isNum(fv) && isNum(ov)) pairs.push([fv, ov]);
+  }
+  if (!pairs.length) return null;
+
+  const med = median(pairs.map((p) => p[0]));
+
+  // `below | at-or-above` first. On a feature with a heavy mode - a count that
+  // is 0 most of the time - that puts everything in one arm, so fall back to
+  // `at-or-below | above`, which cuts the same feature the other way.
+  const split = (test) => {
+    const lo = [], hi = [];
+    for (const [fv, ov] of pairs) (test(fv) ? hi : lo).push(ov);
+    return { lo: Float64Array.from(lo), hi: Float64Array.from(hi) };
+  };
+  let cut = split((fv) => fv >= med);
+  let labels = [`${featureCol} < ${fmt(med, 2)}`, `${featureCol} ≥ ${fmt(med, 2)}`];
+
+  if (!cut.lo.length || !cut.hi.length) {
+    cut = split((fv) => fv > med);
+    labels = [`${featureCol} ≤ ${fmt(med, 2)}`, `${featureCol} > ${fmt(med, 2)}`];
+  }
+  if (!cut.lo.length || !cut.hi.length) return { degenerate: true, med, n: pairs.length };
+
+  return { ...cut, labels, med, n: pairs.length };
+}
+
+function armCard(label, values, color, canvasId) {
+  const m = mean(values);
+  const [lo, hi] = bootstrapMeanCI(values);
+  return `
+    <div class="arm">
+      <div class="label">${escapeHtml(label)}</div>
+      <div class="n">n = ${values.length.toLocaleString()}</div>
+      <div class="metric">
+        <span class="m ${cls(m)}">${signed(m)}</span>
+        <span class="ci">95% CI ${signed(lo)} … ${signed(hi)}</span>
+      </div>
+      <div class="mini"><canvas id="${canvasId}" data-color="${color}"></canvas></div>
+    </div>`;
+}
+
+function renderSplit() {
+  const body = $('split-body');
+
+  if (!state.table) {
+    body.innerHTML = '<div class="empty">No event table loaded.</div>';
+    return;
+  }
+  if (!state.feature) {
+    body.innerHTML = '<div class="empty">This table has no <code>f_</code> feature columns to split on.</div>';
+    return;
+  }
+
+  const split = splitOnMedian(state.feature, metric());
+  if (!split) {
+    body.innerHTML = `<div class="empty">No rows where both <code>${escapeHtml(state.feature)}</code> and <code>${metric()}</code> are measured.</div>`;
+    return;
+  }
+  if (split.degenerate) {
+    body.innerHTML = `<div class="empty"><code>${escapeHtml(state.feature)}</code> is constant at ${fmt(split.med, 2)} across all ${split.n.toLocaleString()} measured rows — there is nothing to split.</div>`;
+    return;
+  }
+
+  const mLo = mean(split.lo), mHi = mean(split.hi);
+  const diff = mHi - mLo;
+  const [dLo, dHi] = bootstrapDiffCI(split.lo, split.hi);
+  const mde = detectableEffect(split.lo, split.hi);
+  const crossesZero = !(dLo > 0 || dHi < 0);
+
+  body.innerHTML = `
+    <div class="arms">
+      ${armCard(split.labels[0], split.lo, '#8f8fb4', 'arm-lo-canvas')}
+      ${armCard(split.labels[1], split.hi, '#6d8dff', 'arm-hi-canvas')}
+    </div>
+    <div class="verdict">
+      <span class="headline">
+        Difference (high − low):
+        <b class="${cls(diff)}">${signed(diff)}</b>
+        <span style="color:var(--muted)">95% CI ${signed(dLo)} … ${signed(dHi)}</span>
+      </span>
+      <span class="why">
+        The interval on the difference is the one that decides:
+        it <b>${crossesZero ? 'contains zero' : 'excludes zero'}</b>, so on ${metric()} this split
+        ${crossesZero ? 'is not resolved by this sample' : 'separates the arms'}.
+        Two overlapping per-arm intervals above would not have told you either way.
+        Smallest difference this sample could resolve at t = 2: <b>${fmt(mde)}</b>.
+      </span>
+    </div>
+    <div class="footnote">
+      Bootstrap: ${nBoot(Math.max(split.lo.length, split.hi.length)).toLocaleString()} resamples, seed ${SEED}, percentile interval.
+      Descriptive only — a split found by clicking through this panel is a hypothesis, not a result, and belongs in a fresh registration.
+    </div>`;
+
+  drawMini('arm-lo-canvas', split.lo, split.hi);
+  drawMini('arm-hi-canvas', split.hi, split.lo);
+}
+
+/** Small paired histogram. Both arms share one x range so they can be read
+    against each other rather than each against its own scale. */
+function drawMini(canvasId, values, other) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !values.length) return;
+
+  const all = Float64Array.from([...values, ...other]).sort();
+  let lo = quantileSorted(all, 0.01), hi = quantileSorted(all, 0.99);
+  lo = Math.min(lo, 0); hi = Math.max(hi, 0);
+  if (!(hi > lo)) { lo -= 0.5; hi += 0.5; }
+
+  const count = 33;
+  const width = (hi - lo) / count;
+  const start = Math.floor(lo / width) * width;
+  const nb = Math.max(1, Math.ceil((hi - start) / width));
+  const bins = new Int32Array(nb);
+  for (let i = 0; i < values.length; i++) {
+    let idx = Math.floor((values[i] - start) / width);
+    if (idx < 0) idx = 0; else if (idx >= nb) idx = nb - 1;
+    bins[idx]++;
+  }
+
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, hgt = canvas.clientHeight;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(hgt * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, hgt);
+
+  const css = getComputedStyle(document.documentElement);
+  const GREEN = css.getPropertyValue('--green').trim();
+  const RED = css.getPropertyValue('--red').trim();
+  const MUTED = css.getPropertyValue('--muted').trim();
+  const ACCENT = css.getPropertyValue('--accent').trim();
+
+  const pad = { t: 8, b: 16 };
+  const plotH = hgt - pad.t - pad.b;
+  const maxCount = Math.max(...bins) || 1;
+  const bw = w / nb;
+  const xOf = (v) => ((v - start) / (width * nb)) * w;
+
+  for (let i = 0; i < nb; i++) {
+    if (!bins[i]) continue;
+    const left = start + i * width;
+    const y = pad.t + plotH - (bins[i] / maxCount) * plotH;
+    ctx.fillStyle = (left + width / 2) < 0 ? RED : GREEN;
+    ctx.globalAlpha = 0.8;
+    ctx.fillRect(xOf(left) + 0.5, y, Math.max(1, bw - 1), pad.t + plotH - y);
+  }
+  ctx.globalAlpha = 1;
+
+  const zx = Math.round(xOf(0)) + 0.5;
+  ctx.strokeStyle = MUTED; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(zx, pad.t); ctx.lineTo(zx, pad.t + plotH); ctx.stroke();
+
+  const mx = Math.round(xOf(mean(values))) + 0.5;
+  ctx.save();
+  ctx.strokeStyle = ACCENT; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(mx, pad.t); ctx.lineTo(mx, pad.t + plotH); ctx.stroke();
+  ctx.restore();
+
+  ctx.fillStyle = css.getPropertyValue('--dim').trim();
+  ctx.font = '9.5px ' + css.getPropertyValue('--mono');
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(start.toFixed(1), 1, pad.t + plotH + 4);
+  ctx.textAlign = 'right';
+  ctx.fillText((start + width * nb).toFixed(1), w - 1, pad.t + plotH + 4);
+}
+
+/* ===========================================================================
+   Render + resize
+   =========================================================================== */
+
+function renderAll() {
+  renderHorizonButtons();
+  renderSummary();
+  drawHistogram();
+  renderEquity();
+  renderFeatureSelect();
+  renderSplit();
+}
+
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    drawHistogram();
+    if (state.table && state.feature) renderSplit();
+  }, 120);
+});
+
+// Draw the empty state once, so the panels collapse to their placeholders
+// instead of showing blank canvases above them before a file is dropped.
+renderAll();
+</script>
+</body>
+</html>
